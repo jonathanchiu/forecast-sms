@@ -7,7 +7,6 @@ var router          = express.Router();
 // Should probably store these as environment variables...
 var twilio_auth     = 'TWILIO_AUTH_HERE';
 var forecastio_auth = 'FORECASTIO_AUTH_HERE';
-var geonames_user   = 'GEONAMES_USERNAME_HERE';
 
 router.use(body_parser.urlencoded({
   extended: true
@@ -21,77 +20,85 @@ router.post("/", function(req, res) {
   if (twilio.validateExpressRequest(req, twilio_auth, options)) {
     console.log("Request from Twilio verified.");
 
-    // Remove all whitespace occurrences
-    var zip_code = req.body.Body.replace(/\s/g, '');
+    var db = req.db;
+    var collection = db.get('locations');
 
-    if (zip_code.length === 5) {
+    // Remove all whitespace occurrences and convert to integer
+    var zip_code = parseInt(req.body.Body.replace(/\s/g, ''), 10);
+
+    /**
+     * Make API calls synchronously because we need data from
+     * previous calls for subsequent calls
+     */
+    async.waterfall([
       /**
-       * Make API calls synchronously because we need data from
-       * previous calls for subsequent calls
+       * Query MongoDB database for the corresponding zip code
        */
-      async.waterfall([
-        /**
-         * Call Geonames API which will pass an incoming SMS zip code
-         * as a parameter. Returns a JSON object from which we get the
-         * zip code's corresponding latitude and longitude.
-         */
-        function (callback) {
-          var url = 'http://api.geonames.org/postalCodeSearchJSON?postalcode=' + zip_code + '&maxRows=1&username=' + geonames_user;
+      function (callback) {
 
-          request(url, function (error, res, body) {
-            if (!error) {
-              var info = JSON.parse(body)["postalCodes"][0];
-              var lat  = info.lat.toString();
-              var lng  = info.lng.toString();
+        var options = { "limit": 1 };
 
-              callback(null, lat, lng);
-            } else {
-              console.log("zipCodeToCoords: ERROR");
-              console.log(error);
-            }
-          });
-        },
-        /**
-         * Given latitude and longitude from previous function, make
-         * a call to Forecast.IO API to get the current weather for the
-         * corresponding coordinates. Return string containing temperature and
-         * current weather status
-         */
-        function (lat, lng, callback) {
-          var coords = lat + ',' + lng;
-          var url = 'https://api.forecast.io/forecast/' + forecastio_auth + '/' + coords;
+        collection.find( { 'zip_code': zip_code }, options, function(err, records) {
 
-          request(url, function (error, res, body) {
-            if (!error) {
-              var temperature = JSON.parse(body)["currently"].temperature;
-              var status = JSON.parse(body)["currently"].summary;
-              var sms = "It is currently " + temperature + " degrees fahrenheit. " + status;
+          // Record found, valid zip code given
+          if (records.length > 0) {
+            var result    = records[0];
+            var latitude  = result.latitude.toString();
+            var longitude = result.longitude.toString();
+            var state     = result.state_long;
+            var city      = result.city;
 
-              callback(null, sms);
-            } else {
-              console.log("coordsToWeatherSMS: ERROR");
-              console.log(error);
-            }
-          });
-        }
-      ],
+            callback(null, latitude, longitude, state, city);
+          }
+          // Record not found, invalid zip code given
+          else {
+            var twiml = new twilio.TwimlResponse();
+            twiml.message("You gave me an invalid zip code!");
+
+            res.type('text/xml');
+            res.send(twiml.toString());
+          }
+        });
+      },
       /**
-       * Finally, using Twilio API, send a response SMS with the generated
-       * weather information from above
+       * Given latitude and longitude from previous function, make
+       * a call to Forecast.IO API to get the current weather for the
+       * corresponding coordinates. Return string containing temperature and
+       * current weather status
        */
-      function (err, result) {
-        var twiml = new twilio.TwimlResponse();
+      function (latitude, longitude, state, city, callback) {
+        var coords     = latitude + ',' + longitude;
+        var city_state = city + ', ' + state;
+        var url        = 'https://api.forecast.io/forecast/' + forecastio_auth + '/' + coords;
 
-        twiml.message(result);
-        res.type('text/xml');
-        res.send(twiml.toString());
+        request(url, function (error, res, body) {
+          if (!error) {
+            var temperature = JSON.parse(body)["currently"].temperature;
+            var status = JSON.parse(body)["currently"].summary;
+            var sms = "Currently " + temperature + " degrees fahrenheit in " + city_state + ". " + status + ".";
 
-        console.log("sendSMS: CALLED");
-        console.log(result);
-      });
-    } else {
-      res.send("Invalid input");
-    }
+            callback(null, sms);
+          } else {
+            console.log("coordsToWeatherSMS: ERROR");
+            console.log(error);
+          }
+        });
+      }
+    ],
+    /**
+     * Finally, using Twilio API, send a response SMS with the generated
+     * weather information from above
+     */
+    function (err, result) {
+      var twiml = new twilio.TwimlResponse();
+
+      twiml.message(result);
+      res.type('text/xml');
+      res.send(twiml.toString());
+
+      console.log("sendSMS: CALLED");
+      console.log(result);
+    });
   }
   // Someone is being mean...
   else {
