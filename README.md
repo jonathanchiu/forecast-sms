@@ -31,7 +31,7 @@ Forecast SMS takes advantage of:
   * request
 * Twilio API (for SMS)
 * Forecast API (for weather)
-* Geonames API (for location)
+* MongoDB (maps zip codes to coordinates/other info)
 
 ### General
 Currently only working for verified phone numbers because I'm on a Twilio trial account (and I'm too cheap to upgrade)
@@ -47,3 +47,5 @@ var forecast_sms = require('./routes/forecast_sms').router;
 app.use('/API_ENDPOINT_HERE', forecast_sms);
 // Some stuff below this line
 ```
+### Changelog
+3/7/15 - Removed Geonames API and replaced with MongoDB to fetch coordinates (loaded in data using a CSV file from 2000 Census). Text response sends out a bit faster now after removing extraneous API call.
