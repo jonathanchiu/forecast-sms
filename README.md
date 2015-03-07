@@ -2,6 +2,10 @@
 
 Get current temperature and weather conditions by providing zip code, through SMS
 
+Will eventually provide more relevant weather information.
+
+![screenshot](ss.png)
+
 ### Motivation
 
 Main motivation was to just get more hands-on experience working with cool APIs and to get more familiar with routing calls in Node.js.
